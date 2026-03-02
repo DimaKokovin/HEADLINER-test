@@ -1,0 +1,1 @@
+export {CartDetailsPage} from "./CartDetailsPage.tsx"
