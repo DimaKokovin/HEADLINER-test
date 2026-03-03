@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { CartsResponse, Cart } from './types'
+import type { CartsResponse, Cart, UpdateCartProduct } from './types'
 
 const baseURL = 'https://dummyjson.com'
 
@@ -15,10 +15,16 @@ export const getCartById = async (id: number) => {
     return data
 }
 
-export const updateCart = async (id: number, products: any[]) => {
-    const { data } = await axios.put<Cart>(`${baseURL}/carts/${id}`, {
-        merge: true,
-        products,
-    })
+export const updateCart = async (
+    id: number,
+    products: UpdateCartProduct[]
+) => {
+    const { data } = await axios.put<Cart>(
+        `${baseURL}/carts/${id}`,
+        {
+            merge: true,
+            products,
+        }
+    )
     return data
 }

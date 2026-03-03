@@ -6,6 +6,11 @@ export interface Product {
     total: number
 }
 
+export interface UpdateCartProduct {
+    id: number
+    quantity: number
+}
+
 export interface Cart {
     id: number
     userId: number

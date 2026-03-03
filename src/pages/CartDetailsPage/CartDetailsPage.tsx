@@ -2,7 +2,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import styled from '@emotion/styled'
 import { getCartById, updateCart } from '@/entities/cart/api'
-import type { Cart } from '@/entities/cart/types'
+import type { Cart, UpdateCartProduct } from '@/entities/cart/types'
 
 export const CartDetailsPage = () => {
     const { id } = useParams()
@@ -10,45 +10,72 @@ export const CartDetailsPage = () => {
     const queryClient = useQueryClient()
     const cartId = Number(id)
 
-
     const { data, isLoading, isError } = useQuery<Cart>({
         queryKey: ['cart', cartId],
         queryFn: () => getCartById(cartId),
         enabled: !!cartId,
     })
 
-
     const mutation = useMutation({
-        mutationFn: (products: Cart['products']) => updateCart(cartId, products),
-
+        mutationFn: (products: UpdateCartProduct[]) =>
+            updateCart(cartId, products),
 
         onMutate: async (newProducts) => {
             await queryClient.cancelQueries({ queryKey: ['cart', cartId] })
 
-            const previousCart = queryClient.getQueryData<Cart>(['cart', cartId])
+            const previousCart = queryClient.getQueryData<Cart>([
+                'cart',
+                cartId,
+            ])
 
+            queryClient.setQueryData<Cart>(['cart', cartId], (old) => {
+                if (!old) return old
 
-            const newTotal = newProducts.reduce((sum, p) => sum + p.total, 0)
-            const newTotalProducts = newProducts.reduce((sum, p) => sum + p.quantity, 0)
+                const updatedProducts = old.products
+                    .map((p) => {
+                        const updated = newProducts.find(
+                            (np) => np.id === p.id
+                        )
+                        if (!updated) return null
 
-            queryClient.setQueryData<Cart>(['cart', cartId], (old) =>
-                old
-                    ? {
-                        ...old,
-                        products: newProducts,
-                        total: newTotal,
-                        totalProducts: newProducts.length,
-                        totalQuantity: newTotalProducts,
-                    }
-                    : old
-            )
+                        const newTotal = p.price * updated.quantity
+
+                        return {
+                            ...p,
+                            quantity: updated.quantity,
+                            total: newTotal,
+                        }
+                    })
+                    .filter(Boolean) as Cart['products']
+
+                const total = updatedProducts.reduce(
+                    (sum, p) => sum + p.total,
+                    0
+                )
+
+                const totalQuantity = updatedProducts.reduce(
+                    (sum, p) => sum + p.quantity,
+                    0
+                )
+
+                return {
+                    ...old,
+                    products: updatedProducts,
+                    total,
+                    totalProducts: updatedProducts.length,
+                    totalQuantity,
+                }
+            })
 
             return { previousCart }
         },
 
         onError: (_err, _variables, context) => {
             if (context?.previousCart) {
-                queryClient.setQueryData(['cart', cartId], context.previousCart)
+                queryClient.setQueryData(
+                    ['cart', cartId],
+                    context.previousCart
+                )
             }
         },
 
@@ -63,15 +90,28 @@ export const CartDetailsPage = () => {
 
     const handleQuantityChange = (productId: number, quantity: number) => {
         if (quantity < 1) return
-        const updatedProducts = data.products.map((p) =>
-            p.id === productId ? { ...p, quantity, total: p.price * quantity } : p
+
+        const updatedProducts: UpdateCartProduct[] = data.products.map((p) =>
+            p.id === productId
+                ? { id: p.id, quantity }
+                : { id: p.id, quantity: p.quantity }
         )
+
         mutation.mutate(updatedProducts)
     }
 
     const handleRemove = (productId: number) => {
-        if (!window.confirm('Are you sure you want to remove this product?')) return
-        const updatedProducts = data.products.filter((p) => p.id !== productId)
+        if (!window.confirm('Are you sure you want to remove this product?'))
+            // в данном случае это сделано вместо модального окна
+            return
+
+        const updatedProducts: UpdateCartProduct[] = data.products
+            .filter((p) => p.id !== productId)
+            .map((p) => ({
+                id: p.id,
+                quantity: p.quantity,
+            }))
+
         mutation.mutate(updatedProducts)
     }
 
@@ -81,6 +121,10 @@ export const CartDetailsPage = () => {
 
             <Title>Cart #{data.id}</Title>
             <SubTitle>User ID: {data.userId}</SubTitle>
+
+            {mutation.isPending && (
+                <Updating>Updating cart...</Updating>
+            )}
 
             <Table>
                 <thead>
@@ -102,15 +146,26 @@ export const CartDetailsPage = () => {
                                 type="number"
                                 min="1"
                                 value={product.quantity}
+                                disabled={mutation.isPending}
                                 onChange={(e) =>
-                                    handleQuantityChange(product.id, Number(e.target.value))
+                                    handleQuantityChange(
+                                        product.id,
+                                        Number(e.target.value)
+                                    )
                                 }
                             />
                         </td>
                         <td>${product.total}</td>
                         <td>
-                            <DeleteButton onClick={() => handleRemove(product.id)}>
-                                Remove
+                            <DeleteButton
+                                disabled={mutation.isPending}
+                                onClick={() =>
+                                    handleRemove(product.id)
+                                }
+                            >
+                                {mutation.isPending
+                                    ? 'Updating...'
+                                    : 'Remove'}
                             </DeleteButton>
                         </td>
                     </tr>
@@ -122,8 +177,6 @@ export const CartDetailsPage = () => {
         </Container>
     )
 }
-
-
 
 const Container = styled.div`
   max-width: 900px;
@@ -138,6 +191,13 @@ const Title = styled.h1`
 const SubTitle = styled.h3`
   text-align: center;
   margin-bottom: 20px;
+`
+
+const Updating = styled.div`
+  text-align: center;
+  margin-bottom: 10px;
+  color: #4f46e5;
+  font-weight: 500;
 `
 
 const Table = styled.table`
