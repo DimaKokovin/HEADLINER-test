@@ -8,8 +8,8 @@ export const CartDetailsPage = () => {
     const { id } = useParams()
     const navigate = useNavigate()
     const queryClient = useQueryClient()
-
     const cartId = Number(id)
+
 
     const { data, isLoading, isError } = useQuery<Cart>({
         queryKey: ['cart', cartId],
@@ -17,18 +17,44 @@ export const CartDetailsPage = () => {
         enabled: !!cartId,
     })
 
+
     const mutation = useMutation({
-        mutationFn: (products: Cart['products']) =>
-            updateCart(cartId, products),
+        mutationFn: (products: Cart['products']) => updateCart(cartId, products),
 
-        onSuccess: async () => {
-            await queryClient.invalidateQueries({
-                queryKey: ['cart', cartId],
-            })
 
-            await queryClient.invalidateQueries({
-                queryKey: ['carts'],
-            })
+        onMutate: async (newProducts) => {
+            await queryClient.cancelQueries({ queryKey: ['cart', cartId] })
+
+            const previousCart = queryClient.getQueryData<Cart>(['cart', cartId])
+
+
+            const newTotal = newProducts.reduce((sum, p) => sum + p.total, 0)
+            const newTotalProducts = newProducts.reduce((sum, p) => sum + p.quantity, 0)
+
+            queryClient.setQueryData<Cart>(['cart', cartId], (old) =>
+                old
+                    ? {
+                        ...old,
+                        products: newProducts,
+                        total: newTotal,
+                        totalProducts: newProducts.length,
+                        totalQuantity: newTotalProducts,
+                    }
+                    : old
+            )
+
+            return { previousCart }
+        },
+
+        onError: (_err, _variables, context) => {
+            if (context?.previousCart) {
+                queryClient.setQueryData(['cart', cartId], context.previousCart)
+            }
+        },
+
+        onSettled: () => {
+            queryClient.invalidateQueries({ queryKey: ['cart', cartId] })
+            queryClient.invalidateQueries({ queryKey: ['carts'] })
         },
     })
 
@@ -36,16 +62,16 @@ export const CartDetailsPage = () => {
     if (isError || !data) return <Centered>Error loading cart</Centered>
 
     const handleQuantityChange = (productId: number, quantity: number) => {
+        if (quantity < 1) return
         const updatedProducts = data.products.map((p) =>
-            p.id === productId ? { ...p, quantity } : p
+            p.id === productId ? { ...p, quantity, total: p.price * quantity } : p
         )
         mutation.mutate(updatedProducts)
     }
 
     const handleRemove = (productId: number) => {
-        const updatedProducts = data.products.filter(
-            (p) => p.id !== productId
-        )
+        if (!window.confirm('Are you sure you want to remove this product?')) return
+        const updatedProducts = data.products.filter((p) => p.id !== productId)
         mutation.mutate(updatedProducts)
     }
 
@@ -56,35 +82,47 @@ export const CartDetailsPage = () => {
             <Title>Cart #{data.id}</Title>
             <SubTitle>User ID: {data.userId}</SubTitle>
 
-            {data.products.map((product) => (
-                <Card key={product.id}>
-                    <Info>
-                        <strong>{product.title}</strong>
-                        <div>Price: ${product.price}</div>
-                        <div>Total: ${product.total}</div>
-                    </Info>
-
-                    <Controls>
-                        <QuantityInput
-                            type="number"
-                            min="1"
-                            value={product.quantity}
-                            onChange={(e) =>
-                                handleQuantityChange(product.id, Number(e.target.value))
-                            }
-                        />
-
-                        <DeleteButton onClick={() => handleRemove(product.id)}>
-                            Remove
-                        </DeleteButton>
-                    </Controls>
-                </Card>
-            ))}
+            <Table>
+                <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>Price</th>
+                    <th>Quantity</th>
+                    <th>Total</th>
+                    <th>Action</th>
+                </tr>
+                </thead>
+                <tbody>
+                {data.products.map((product) => (
+                    <tr key={product.id}>
+                        <td>{product.title}</td>
+                        <td>${product.price}</td>
+                        <td>
+                            <QuantityInput
+                                type="number"
+                                min="1"
+                                value={product.quantity}
+                                onChange={(e) =>
+                                    handleQuantityChange(product.id, Number(e.target.value))
+                                }
+                            />
+                        </td>
+                        <td>${product.total}</td>
+                        <td>
+                            <DeleteButton onClick={() => handleRemove(product.id)}>
+                                Remove
+                            </DeleteButton>
+                        </td>
+                    </tr>
+                ))}
+                </tbody>
+            </Table>
 
             <Total>Total Cart Sum: ${data.total}</Total>
         </Container>
     )
 }
+
 
 
 const Container = styled.div`
@@ -99,28 +137,27 @@ const Title = styled.h1`
 
 const SubTitle = styled.h3`
   text-align: center;
-  margin-bottom: 30px;
+  margin-bottom: 20px;
 `
 
-const Card = styled.div`
-  display: flex;
-  justify-content: space-between;
-  padding: 16px;
-  margin-bottom: 16px;
-  border: 1px solid #ddd;
-  border-radius: 8px;
-`
+const Table = styled.table`
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 20px;
 
-const Info = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-`
+  th, td {
+    padding: 12px;
+    border: 1px solid #ddd;
+    text-align: center;
+  }
 
-const Controls = styled.div`
-  display: flex;
-  gap: 10px;
-  align-items: center;
+  th {
+    background: #f3f4f6;
+  }
+
+  tr:hover {
+    background: #f9fafb;
+  }
 `
 
 const QuantityInput = styled.input`
@@ -138,6 +175,11 @@ const DeleteButton = styled.button`
 
   &:hover {
     background: #dc2626;
+  }
+
+  &:disabled {
+    background: #ccc;
+    cursor: not-allowed;
   }
 `
 
